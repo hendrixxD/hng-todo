@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* Dark mode is controlled by a .dark class on <html>, which an inline script in
+   layout.tsx sets before paint (persisted in localStorage, falls back to the
+   OS preference). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
