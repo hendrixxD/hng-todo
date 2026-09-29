@@ -41,8 +41,15 @@ function resolveDataDir(): string {
       // Read-only filesystem (e.g. serverless) — fall through to the next candidate.
     }
   }
-  // Last resort: the OS temp directory is always writable.
-  return path.join(os.tmpdir(), "hng-todo-data");
+  // Last resort: the OS temp directory — created on demand, because serverless
+  // sandboxes start with an empty tmpdir.
+  const fallback = path.join(os.tmpdir(), "hng-todo-data");
+  try {
+    fs.mkdirSync(fallback, { recursive: true });
+  } catch {
+    // Even this failed — writes will surface a clear error downstream.
+  }
+  return fallback;
 }
 
 let writeQueue: Promise<unknown> = Promise.resolve();
@@ -143,7 +150,9 @@ function readDb(): DbShape {
 }
 
 function writeDb(db: DbShape): void {
-  fs.writeFileSync(dbFilePath(), JSON.stringify(db, null, 2), "utf8");
+  const file = dbFilePath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(db, null, 2), "utf8");
 }
 
 let lastTimestamp = "";

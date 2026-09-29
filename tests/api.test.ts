@@ -429,3 +429,27 @@ describe("GET /api/stats", () => {
     expect(after.totalNotes).toBe(before.totalNotes + 1);
   });
 });
+
+describe("storage (production-like)", () => {
+  it("creates and lists with DATA_DIR unset, like on Vercel", async () => {
+    const original = process.env.DATA_DIR;
+    delete process.env.DATA_DIR;
+    try {
+      const created = await createTaskRoute(
+        request("http://localhost/api/tasks", "POST", { title: "Production-like create" })
+      );
+      expect(created.status).toBe(201);
+
+      const list = await listTasksRoute(request("http://localhost/api/tasks"));
+      const data = (await payload(list)).data as { count: number };
+      expect(data.count).toBe(1);
+    } finally {
+      if (original === undefined) {
+        delete process.env.DATA_DIR;
+      } else {
+        process.env.DATA_DIR = original;
+      }
+      await resetForTests();
+    }
+  });
+});
