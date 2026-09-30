@@ -13,12 +13,22 @@ import { buildSeed } from "./seed";
 
 /**
  * Postgres-backed implementation of the store, used in production when
- * DATABASE_URL is set (Neon). Same exported signatures as the file store —
- * the facade in store.ts picks one.
+ * DATABASE_URL is set (Aiven/Neon). Same exported signatures as the file
+ * store — the facade in store.ts picks one.
  *
  * Timestamps are stored as ISO TEXT (generated app-side, monotonic) so the
  * JSON round-trip shape of the API is byte-identical between modes.
+ *
+ * Tables live in their own schema so multiple apps can share one database
+ * without colliding.
  */
+
+const SCHEMA = "hng_todo";
+const TABLES = {
+  tasks: `${SCHEMA}.tasks`,
+  notes: `${SCHEMA}.notes`,
+  meta: `${SCHEMA}.app_meta`,
+};
 
 declare global {
   // Cached across invocations on the same serverless instance.
@@ -34,7 +44,8 @@ function getPool(): Pool {
     }
     globalThis.__hngTodoPgPool = new Pool({
       connectionString,
-      // Neon requires TLS; the connection string carries sslmode=require.
+      // Managed providers (Aiven/Neon) require TLS; the connection string
+      // carries sslmode=require.
       ssl: connectionString.includes("sslmode=")
         ? { rejectUnauthorized: false }
         : undefined,
@@ -63,8 +74,9 @@ function ready(): Promise<void> {
   if (!readyPromise) {
     readyPromise = (async () => {
       const pool = getPool();
+      await pool.query(`CREATE SCHEMA IF NOT EXISTS ${SCHEMA}`);
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS tasks (
+        CREATE TABLE IF NOT EXISTS ${TABLES.tasks} (
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
           description TEXT NOT NULL DEFAULT '',
@@ -76,7 +88,7 @@ function ready(): Promise<void> {
         )
       `);
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS notes (
+        CREATE TABLE IF NOT EXISTS ${TABLES.notes} (
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
           content TEXT NOT NULL,
@@ -85,13 +97,15 @@ function ready(): Promise<void> {
         )
       `);
       await pool.query(`
-        CREATE TABLE IF NOT EXISTS app_meta (
+        CREATE TABLE IF NOT EXISTS ${TABLES.meta} (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
         )
       `);
 
-      const seeded = await pool.query(`SELECT 1 FROM app_meta WHERE key = 'seeded'`);
+      const seeded = await pool.query(
+        `SELECT 1 FROM ${TABLES.meta} WHERE key = 'seeded'`
+      );
       if (seeded.rowCount === 0) {
         const seed = buildSeed();
         const client = await pool.connect();
@@ -99,7 +113,7 @@ function ready(): Promise<void> {
           await client.query("BEGIN");
           for (const task of seed.tasks) {
             await client.query(
-              `INSERT INTO tasks (id, title, description, priority, due_date, completed, created_at, updated_at)
+              `INSERT INTO ${TABLES.tasks} (id, title, description, priority, due_date, completed, created_at, updated_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
               [
                 task.id,
@@ -115,13 +129,13 @@ function ready(): Promise<void> {
           }
           for (const note of seed.notes) {
             await client.query(
-              `INSERT INTO notes (id, title, content, created_at, updated_at)
+              `INSERT INTO ${TABLES.notes} (id, title, content, created_at, updated_at)
                VALUES ($1, $2, $3, $4, $5)`,
               [note.id, note.title, note.content, note.createdAt, note.updatedAt]
             );
           }
           await client.query(
-            `INSERT INTO app_meta (key, value) VALUES ('seeded', $1)
+            `INSERT INTO ${TABLES.meta} (key, value) VALUES ('seeded', $1)
              ON CONFLICT (key) DO NOTHING`,
             [new Date().toISOString()]
           );
@@ -154,7 +168,7 @@ function rowToTask(row: QueryResultRow): Task {
   };
 }
 
-function rowToNote(row: Record<string, unknown>): Note {
+function rowToNote(row: QueryResultRow): Note {
   return {
     id: String(row.id),
     title: String(row.title),
@@ -172,13 +186,13 @@ function byNewestFirst(a: { createdAt: string }, b: { createdAt: string }): numb
 
 export async function listTasks(): Promise<Task[]> {
   await ready();
-  const result = await getPool().query("SELECT * FROM tasks");
+  const result = await getPool().query(`SELECT * FROM ${TABLES.tasks}`);
   return result.rows.map(rowToTask).sort(byNewestFirst);
 }
 
 export async function getTask(id: string): Promise<Task | null> {
   await ready();
-  const result = await getPool().query("SELECT * FROM tasks WHERE id = $1", [id]);
+  const result = await getPool().query(`SELECT * FROM ${TABLES.tasks} WHERE id = $1`, [id]);
   return result.rows[0] ? rowToTask(result.rows[0]) : null;
 }
 
@@ -186,7 +200,7 @@ export async function createTask(input: TaskCreateInput): Promise<Task> {
   await ready();
   const now = timestamp();
   const result = await getPool().query(
-    `INSERT INTO tasks (id, title, description, priority, due_date, completed, created_at, updated_at)
+    `INSERT INTO ${TABLES.tasks} (id, title, description, priority, due_date, completed, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
@@ -232,7 +246,7 @@ export async function updateTask(
   values.push(id);
 
   const result = await getPool().query(
-    `UPDATE tasks SET ${sets.join(", ")} WHERE id = $${index} RETURNING *`,
+    `UPDATE ${TABLES.tasks} SET ${sets.join(", ")} WHERE id = $${index} RETURNING *`,
     values
   );
   return result.rows[0] ? rowToTask(result.rows[0]) : null;
@@ -241,7 +255,7 @@ export async function updateTask(
 export async function deleteTask(id: string): Promise<Task | null> {
   await ready();
   const result = await getPool().query(
-    "DELETE FROM tasks WHERE id = $1 RETURNING *",
+    `DELETE FROM ${TABLES.tasks} WHERE id = $1 RETURNING *`,
     [id]
   );
   return result.rows[0] ? rowToTask(result.rows[0]) : null;
@@ -251,13 +265,13 @@ export async function deleteTask(id: string): Promise<Task | null> {
 
 export async function listNotes(): Promise<Note[]> {
   await ready();
-  const result = await getPool().query("SELECT * FROM notes");
+  const result = await getPool().query(`SELECT * FROM ${TABLES.notes}`);
   return result.rows.map(rowToNote).sort(byNewestFirst);
 }
 
 export async function getNote(id: string): Promise<Note | null> {
   await ready();
-  const result = await getPool().query("SELECT * FROM notes WHERE id = $1", [id]);
+  const result = await getPool().query(`SELECT * FROM ${TABLES.notes} WHERE id = $1`, [id]);
   return result.rows[0] ? rowToNote(result.rows[0]) : null;
 }
 
@@ -265,7 +279,7 @@ export async function createNote(input: NoteCreateInput): Promise<Note> {
   await ready();
   const now = timestamp();
   const result = await getPool().query(
-    `INSERT INTO notes (id, title, content, created_at, updated_at)
+    `INSERT INTO ${TABLES.notes} (id, title, content, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [randomUUID(), input.title, input.content, now, now]
@@ -299,7 +313,7 @@ export async function updateNote(
   values.push(id);
 
   const result = await getPool().query(
-    `UPDATE notes SET ${sets.join(", ")} WHERE id = $${index} RETURNING *`,
+    `UPDATE ${TABLES.notes} SET ${sets.join(", ")} WHERE id = $${index} RETURNING *`,
     values
   );
   return result.rows[0] ? rowToNote(result.rows[0]) : null;
@@ -308,7 +322,7 @@ export async function updateNote(
 export async function deleteNote(id: string): Promise<Note | null> {
   await ready();
   const result = await getPool().query(
-    "DELETE FROM notes WHERE id = $1 RETURNING *",
+    `DELETE FROM ${TABLES.notes} WHERE id = $1 RETURNING *`,
     [id]
   );
   return result.rows[0] ? rowToNote(result.rows[0]) : null;
@@ -319,8 +333,8 @@ export async function deleteNote(id: string): Promise<Note | null> {
 export async function getStats(): Promise<Stats> {
   await ready();
   const pool = getPool();
-  const tasks = await pool.query("SELECT completed, due_date FROM tasks");
-  const notes = await pool.query("SELECT COUNT(*)::int AS count FROM notes");
+  const tasks = await pool.query(`SELECT completed, due_date FROM ${TABLES.tasks}`);
+  const notes = await pool.query(`SELECT COUNT(*)::int AS count FROM ${TABLES.notes}`);
 
   const today = new Date().toISOString().slice(0, 10);
   const rows = tasks.rows as Array<{ completed: boolean; due_date: string | null }>;
