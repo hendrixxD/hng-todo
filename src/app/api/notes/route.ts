@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search")?.trim().toLowerCase() ?? "";
 
-    const notes = listNotes().filter((note) => {
+    const notes = (await listNotes()).filter((note) => {
       if (!search) return true;
       return `${note.title} ${note.content}`.toLowerCase().includes(search);
     });

@@ -9,7 +9,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, { params }: RouteContext) {
   const { id } = await params;
   try {
-    const note = getNote(id);
+    const note = await getNote(id);
     if (!note) {
       return fail("Note not found.", 404);
     }

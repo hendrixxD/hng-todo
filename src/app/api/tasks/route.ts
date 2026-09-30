@@ -39,7 +39,7 @@ export async function GET(request: Request) {
       return fail("priority must be one of: all, low, medium, high.", 400);
     }
 
-    const tasks = listTasks().filter((task) =>
+    const tasks = (await listTasks()).filter((task) =>
       matchesFilters(task, search, status, priority)
     );
     return ok({ tasks, count: tasks.length });

@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    return ok(getStats());
+    return ok(await getStats());
   } catch (error) {
     return fail("Failed to load stats.", 500, [String(error)]);
   }

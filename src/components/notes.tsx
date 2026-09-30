@@ -92,6 +92,7 @@ function NoteCard({
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   async function save() {
     if (saving) return;
@@ -164,12 +165,22 @@ function NoteCard({
           <button
             type="button"
             onClick={() => {
-              if (window.confirm("Delete this note?")) onDelete(note.id);
+              if (confirming) {
+                onDelete(note.id);
+                return;
+              }
+              setConfirming(true);
+              setTimeout(() => setConfirming(false), 3000);
             }}
-            aria-label="Delete note"
-            className="rounded-lg p-1.5 text-sm transition hover:bg-rose-100 dark:hover:bg-rose-500/15"
+            aria-label={confirming ? "Confirm delete note" : "Delete note"}
+            title={confirming ? "Click again to delete" : "Delete note"}
+            className={`rounded-lg p-1.5 text-[11px] font-semibold transition ${
+              confirming
+                ? "bg-rose-500 text-white"
+                : "hover:bg-rose-100 dark:hover:bg-rose-500/15"
+            }`}
           >
-            🗑️
+            {confirming ? "Sure?" : "🗑️"}
           </button>
         </div>
       </div>
